@@ -1,0 +1,21 @@
+[project]
+name = "world-model-experiments"
+version = "0.1.0"
+description = "Personal experiments with world models"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "torch",
+    "numpy",
+    "opencv-python-headless",
+    "einops",
+    "vector-quantize-pytorch",
+    "flash-attn",
+    "requests",
+    "tqdm",
+    "pandas",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
