@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from vector_quantize_pytorch import VectorQuantize
+from .quantizer import VectorQuantizer
 
 class ResNetBlock(nn.Module):
     def __init__(self, dim):
@@ -53,9 +53,10 @@ class Encoder(nn.Module):
                 else:
                     self.layers.append(ConvNextBlock(current_dim))
             
-            # Downsample
-            self.layers.append(nn.Conv2d(current_dim, current_dim, 4, stride=2, padding=1))
+            # Downsample and double channels
+            self.layers.append(nn.Conv2d(current_dim, current_dim * 2, 4, stride=2, padding=1))
             self.layers.append(nn.ReLU() if block_type == 'resnet' else nn.GELU())
+            current_dim *= 2
 
         # Final blocks
         for _ in range(layers):
@@ -74,10 +75,12 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, out_channels, hidden_dim, layers, num_upsamples, block_type='resnet'):
         super().__init__()
-        self.initial_conv = nn.Conv2d(256, hidden_dim, 1)
-        self.layers = nn.ModuleList()
         
-        current_dim = hidden_dim
+        # Calculate starting dimension (reverse of encoder)
+        current_dim = hidden_dim * (2 ** num_upsamples)
+        
+        self.initial_conv = nn.Conv2d(256, current_dim, 1)
+        self.layers = nn.ModuleList()
         
         # Initial blocks
         for _ in range(layers):
@@ -88,9 +91,10 @@ class Decoder(nn.Module):
                 
         # Upsampling layers
         for _ in range(num_upsamples):
-            # Upsample
-            self.layers.append(nn.ConvTranspose2d(current_dim, current_dim, 4, stride=2, padding=1))
+            # Upsample and halve channels
+            self.layers.append(nn.ConvTranspose2d(current_dim, current_dim // 2, 4, stride=2, padding=1))
             self.layers.append(nn.ReLU() if block_type == 'resnet' else nn.GELU())
+            current_dim //= 2
             
             # Add blocks
             for _ in range(layers):
@@ -114,9 +118,10 @@ class VQVAE(nn.Module):
                  layers=2, 
                  num_downsamples=3,
                  input_resolution=128,
-                 block_type='resnet',
+                 block_type='convnext',
                  codebook_size=1024,
-                 codebook_dim=256):
+                 codebook_dim=256,
+                 decay=0.99):
         super().__init__()
         
         # Validation
@@ -130,19 +135,17 @@ class VQVAE(nn.Module):
             )
         
         self.encoder = Encoder(in_channels, hidden_dim, layers, num_downsamples, block_type)
-        self.vq = VectorQuantize(
-            dim=codebook_dim,
-            codebook_size=codebook_size,
-            decay=0.8,             # Exponential moving average decay
-            commitment_weight=1.   # Weight for commitment loss
+        self.vq = VectorQuantizer(
+            num_embeddings=codebook_size,
+            embedding_dim=codebook_dim,
+            commitment_cost=0.25,
+            decay=decay
         )
         self.decoder = Decoder(in_channels, hidden_dim, layers, num_downsamples, block_type)
 
     def forward(self, x):
         z = self.encoder(x)
-        quantized, indices, commit_loss = self.vq(z.permute(0, 2, 3, 1)) # VQ expects (B, H, W, C)
-        quantized = quantized.permute(0, 3, 1, 2) # Back to (B, C, H, W)
-        
+        quantized, indices, commit_loss = self.vq(z)
         recon = self.decoder(quantized)
         
         return recon, indices, commit_loss
