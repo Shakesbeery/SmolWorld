@@ -8,8 +8,9 @@ SmolWorld is a research repository for training Generative World Models on the O
 
 *   **VQ-VAE**:
     *   **Architecture**: CNN Encoder/Decoder with ResNet or ConvNeXt blocks.
+    *   **Features**: Progressive channel scaling (doubles in encoder, halves in decoder), EMA codebook updates.
     *   **Quantization**: Vector Quantization with learnable codebook (custom implementation).
-    *   **Config**: 16x16 latent grid, 1024 codebook size, 256 dim.
+    *   **Config**: Configurable latent grid, codebook size, and dimensions.
 *   **World Model**:
     *   **Architecture**: Decoder-only Transformer (Llama-style).
     *   **Features**: RMSNorm (Pre-norm), RoPE (Rotary Positional Embeddings), SwiGLU activation.
@@ -17,7 +18,7 @@ SmolWorld is a research repository for training Generative World Models on the O
 *   **Training**:
     *   **Precision**: BF16/FP16 Mixed Precision.
     *   **Optimization**: AdamW with ReduceLROnPlateau.
-    *   **Data**: Interleaved Action/Image tokens.
+    *   **Data**: Interleaved Action/Image tokens, optimized lazy loading.
 
 ## 📦 Installation
 
@@ -52,8 +53,16 @@ python data/pipeline.py --resolution 64 --force-download
 Train the VQ-VAE to compress images into tokens.
 
 ```bash
-# Train on 64x64 data
-python train_vqvae.py --data_path data/processed/shard_res64.pt --resolution 64 --downsamples 2 --batch_size 32 --epochs 100
+# Train on 64x64 data with custom configuration
+python train_vqvae.py \
+    --data_path data/processed/shard_res64.pt \
+    --resolution 64 \
+    --downsamples 2 \
+    --base_channels 32 \
+    --codebook_size 1024 \
+    --codebook_dim 256 \
+    --batch_size 32 \
+    --epochs 100
 
 # Resume/Fine-tune
 python train_vqvae.py --data_path ... --epochs 50

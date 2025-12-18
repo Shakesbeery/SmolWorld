@@ -35,14 +35,14 @@ class ConvNextBlock(nn.Module):
         return residual + x
 
 class Encoder(nn.Module):
-    def __init__(self, in_channels, hidden_dim, layers, num_downsamples, block_type='resnet'):
+    def __init__(self, in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type='resnet'):
         super().__init__()
         self.layers = nn.ModuleList()
         
         # Initial projection
-        self.layers.append(nn.Conv2d(in_channels, hidden_dim, 3, padding=1))
+        self.layers.append(nn.Conv2d(in_channels, base_channels, 3, padding=1))
         
-        current_dim = hidden_dim
+        current_dim = base_channels
         
         # Downsampling layers
         for _ in range(num_downsamples):
@@ -65,7 +65,7 @@ class Encoder(nn.Module):
             else:
                 self.layers.append(ConvNextBlock(current_dim))
                 
-        self.final_conv = nn.Conv2d(current_dim, 256, 1) # Project to latent dim
+        self.final_conv = nn.Conv2d(current_dim, codebook_dim, 1) # Project to latent dim
 
     def forward(self, x):
         for layer in self.layers:
@@ -73,13 +73,13 @@ class Encoder(nn.Module):
         return self.final_conv(x)
 
 class Decoder(nn.Module):
-    def __init__(self, out_channels, hidden_dim, layers, num_upsamples, block_type='resnet'):
+    def __init__(self, out_channels, base_channels, layers, num_upsamples, codebook_dim, block_type='resnet'):
         super().__init__()
         
         # Calculate starting dimension (reverse of encoder)
-        current_dim = hidden_dim * (2 ** num_upsamples)
+        current_dim = base_channels * (2 ** num_upsamples)
         
-        self.initial_conv = nn.Conv2d(256, current_dim, 1)
+        self.initial_conv = nn.Conv2d(codebook_dim, current_dim, 1)
         self.layers = nn.ModuleList()
         
         # Initial blocks
@@ -114,7 +114,7 @@ class Decoder(nn.Module):
 class VQVAE(nn.Module):
     def __init__(self, 
                  in_channels=3, 
-                 hidden_dim=128, 
+                 base_channels=128, 
                  layers=2, 
                  num_downsamples=3,
                  input_resolution=128,
@@ -134,14 +134,14 @@ class VQVAE(nn.Module):
                 f"Result is {input_resolution / downsample_factor}."
             )
         
-        self.encoder = Encoder(in_channels, hidden_dim, layers, num_downsamples, block_type)
+        self.encoder = Encoder(in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type)
         self.vq = VectorQuantizer(
             num_embeddings=codebook_size,
             embedding_dim=codebook_dim,
             commitment_cost=0.25,
             decay=decay
         )
-        self.decoder = Decoder(in_channels, hidden_dim, layers, num_downsamples, block_type)
+        self.decoder = Decoder(in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type)
 
     def forward(self, x):
         z = self.encoder(x)

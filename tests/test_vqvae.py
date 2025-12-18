@@ -13,7 +13,7 @@ def test_vqvae():
     
     # 1. Standard Configuration (128x128, 3 layers -> 16x16)
     print("\n1. Testing Standard Config (128x128, 3 layers)...")
-    model = VQVAE(in_channels=3, hidden_dim=64, layers=2, num_downsamples=3, input_resolution=128, block_type='resnet')
+    model = VQVAE(in_channels=3, base_channels=64, layers=2, num_downsamples=3, input_resolution=128, block_type='resnet')
     x = torch.randn(1, 3, 128, 128)
     recon, indices, loss = model(x)
     print(f"   Input: {x.shape}, Recon: {recon.shape}, Indices: {indices.shape}")
@@ -22,7 +22,7 @@ def test_vqvae():
 
     # 2. Smaller Config (64x64, 2 layers -> 16x16)
     print("\n2. Testing Smaller Config (64x64, 2 layers)...")
-    model = VQVAE(in_channels=3, hidden_dim=64, layers=2, num_downsamples=2, input_resolution=64, block_type='convnext')
+    model = VQVAE(in_channels=3, base_channels=64, layers=2, num_downsamples=2, input_resolution=64, block_type='convnext')
     x = torch.randn(1, 3, 64, 64)
     recon, indices, loss = model(x)
     print(f"   Input: {x.shape}, Recon: {recon.shape}, Indices: {indices.shape}")
@@ -32,7 +32,7 @@ def test_vqvae():
     # 3. Invalid Config (64x64, 3 layers -> 8x8 != 16x16)
     print("\n3. Testing Invalid Config (64x64, 3 layers)...")
     try:
-        model = VQVAE(in_channels=3, hidden_dim=64, layers=2, num_downsamples=3, input_resolution=64)
+        model = VQVAE(in_channels=3, base_channels=64, layers=2, num_downsamples=3, input_resolution=64)
         print("   FAILED: Should have raised ValueError")
     except ValueError as e:
         print(f"   PASSED: Caught expected error: {e}")

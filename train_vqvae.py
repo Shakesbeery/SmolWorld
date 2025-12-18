@@ -14,18 +14,18 @@ class VPTDataset(Dataset):
     def __init__(self, data_path):
         print(f"Loading data from {data_path}...")
         data = torch.load(data_path)
-        self.states = data['states'] # (T, H, W, C)
-        # Convert to float and normalize to [0, 1]
-        # Also permute to (T, C, H, W) for PyTorch
-        print("Preprocessing data...")
-        self.states = self.states.permute(0, 3, 1, 2).float() / 255.0
+        self.states = data['states'] # (T, H, W, C) in uint8
         print(f"Loaded {len(self.states)} frames.")
 
     def __len__(self):
         return len(self.states)
 
     def __getitem__(self, idx):
-        return self.states[idx]
+        # Lazy processing: Convert to float and permute on the fly
+        # Input: (H, W, C) uint8
+        # Output: (C, H, W) float32 normalized
+        state = self.states[idx]
+        return state.permute(2, 0, 1).float() / 255.0
 
 def save_sample(model, x, epoch, output_dir):
     model.eval()
@@ -75,6 +75,9 @@ def main():
     parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
     parser.add_argument("--resolution", type=int, default=64, help="Input resolution")
     parser.add_argument("--downsamples", type=int, default=2, help="Number of downsample layers")
+    parser.add_argument("--base_channels", type=int, default=32, help="Base channel dimension (hidden_dim)")
+    parser.add_argument("--codebook_size", type=int, default=1024, help="Size of the codebook")
+    parser.add_argument("--codebook_dim", type=int, default=256, help="Dimension of codebook embeddings")
     
     args = parser.parse_args()
     
@@ -86,15 +89,17 @@ def main():
     
     # Data
     dataset = VPTDataset(args.data_path)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
     
     # Model
     model = VQVAE(
         in_channels=3, 
-        hidden_dim=64, 
+        base_channels=args.base_channels, 
         layers=2, 
         num_downsamples=args.downsamples,
-        input_resolution=args.resolution
+        input_resolution=args.resolution,
+        codebook_size=args.codebook_size,
+        codebook_dim=args.codebook_dim
     ).to(device)
     print("Model initialized")
     
