@@ -41,33 +41,48 @@ SmolWorld is a research repository for training Generative World Models on the O
 Download and preprocess the OpenAI VPT dataset.
 
 ```bash
-# Download and process to 64x64 resolution
-python data/pipeline.py --resolution 64
+# Download and process a single shard to 64x64 resolution
+python data/pipeline.py --resolution 64 --num_shards 1
 
-# Force re-download if needed
-python data/pipeline.py --resolution 64 --force-download
+# Download and process multiple random shards
+python data/pipeline.py --resolution 64 --num_shards 10
 ```
-*Output*: `data/processed/shard_res64.pt`
+*Output*: `data/processed/shard_X_res64.pt`
 
 ### 2. Train Visual Tokenizer (VQ-VAE)
 Train the VQ-VAE to compress images into tokens.
 
 ```bash
-# Train on 64x64 data with custom configuration
+# Train on a single file
+python train_vqvae.py --data_path data/processed/shard_000000_res64.pt ...
+
+# Train on all files in a directory (Multi-shard)
+# Note: Automatically filters files matching *_res{resolution}.pt
 python train_vqvae.py \
-    --data_path data/processed/shard_res64.pt \
+    --data_path data/processed \
     --resolution 64 \
     --downsamples 2 \
     --base_channels 32 \
     --codebook_size 1024 \
     --codebook_dim 256 \
+    --block_type convnext \
+    --channel_multiplier 2.0 \
     --batch_size 32 \
     --epochs 100
 
-# Resume/Fine-tune
-python train_vqvae.py --data_path ... --epochs 50
+# Resume Training
+# Resumes from the exact epoch, optimizer, and scheduler state
+python train_vqvae.py --data_path data/processed --resume checkpoints/last_model.pt
 ```
-*Output*: `checkpoints/best_model.pt` (and visualization images)
+*Output*: `checkpoints/best_model.pt` (best validation loss) and `checkpoints/last_model.pt` (latest state).
+
+### Features
+*   **Multi-Shard Support**: Load data from a directory of `.pt` files.
+*   **Resolution Filtering**: Automatically selects files matching the target resolution.
+*   **Configurable Architecture**:
+    *   `--block_type`: Choose between `resnet` (with BatchNorm) or `convnext`.
+    *   `--channel_multiplier`: Float factor for channel scaling (e.g., 1.5 or 2.0).
+*   **Resumption**: Seamlessly resume training from checkpoints.
 
 ### 3. Train World Model
 Train the Transformer to predict the future.

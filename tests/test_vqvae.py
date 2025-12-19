@@ -37,6 +37,14 @@ def test_vqvae():
     except ValueError as e:
         print(f"   PASSED: Caught expected error: {e}")
 
+    # 4. Test Channel Multiplier
+    print("\n4. Testing Channel Multiplier (1.5)...")
+    model = VQVAE(input_resolution=64, num_downsamples=2, base_channels=16, channel_multiplier=1.5)
+    x = torch.randn(1, 3, 64, 64)
+    recon, indices, _ = model(x)
+    print(f"   Input: {x.shape}, Recon: {recon.shape}, Indices: {indices.shape}")
+    assert recon.shape == x.shape, f"Recon shape mismatch: {recon.shape} != {x.shape}"
+
     print("\nVQ-VAE Tests Passed!")
 
 if __name__ == "__main__":

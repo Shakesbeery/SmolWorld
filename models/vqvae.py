@@ -8,13 +8,14 @@ class ResNetBlock(nn.Module):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(dim, dim, 3, padding=1),
+            nn.BatchNorm2d(dim),
             nn.ReLU(),
             nn.Conv2d(dim, dim, 3, padding=1),
-            nn.ReLU()
+            nn.BatchNorm2d(dim)
         )
 
     def forward(self, x):
-        return x + self.block(x)
+        return F.relu(x + self.block(x))
 
 class ConvNextBlock(nn.Module):
     def __init__(self, dim, mult=4):
@@ -35,7 +36,7 @@ class ConvNextBlock(nn.Module):
         return residual + x
 
 class Encoder(nn.Module):
-    def __init__(self, in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type='resnet'):
+    def __init__(self, in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type='resnet', channel_multiplier=2.0):
         super().__init__()
         self.layers = nn.ModuleList()
         
@@ -53,10 +54,11 @@ class Encoder(nn.Module):
                 else:
                     self.layers.append(ConvNextBlock(current_dim))
             
-            # Downsample and double channels
-            self.layers.append(nn.Conv2d(current_dim, current_dim * 2, 4, stride=2, padding=1))
+            # Downsample and scale channels
+            next_dim = int(current_dim * channel_multiplier)
+            self.layers.append(nn.Conv2d(current_dim, next_dim, 4, stride=2, padding=1))
             self.layers.append(nn.ReLU() if block_type == 'resnet' else nn.GELU())
-            current_dim *= 2
+            current_dim = next_dim
 
         # Final blocks
         for _ in range(layers):
@@ -73,11 +75,11 @@ class Encoder(nn.Module):
         return self.final_conv(x)
 
 class Decoder(nn.Module):
-    def __init__(self, out_channels, base_channels, layers, num_upsamples, codebook_dim, block_type='resnet'):
+    def __init__(self, out_channels, base_channels, layers, num_upsamples, codebook_dim, block_type='resnet', channel_multiplier=2.0):
         super().__init__()
         
         # Calculate starting dimension (reverse of encoder)
-        current_dim = base_channels * (2 ** num_upsamples)
+        current_dim = int(base_channels * (channel_multiplier ** num_upsamples))
         
         self.initial_conv = nn.Conv2d(codebook_dim, current_dim, 1)
         self.layers = nn.ModuleList()
@@ -91,10 +93,11 @@ class Decoder(nn.Module):
                 
         # Upsampling layers
         for _ in range(num_upsamples):
-            # Upsample and halve channels
-            self.layers.append(nn.ConvTranspose2d(current_dim, current_dim // 2, 4, stride=2, padding=1))
+            # Upsample and scale channels
+            next_dim = int(current_dim / channel_multiplier)
+            self.layers.append(nn.ConvTranspose2d(current_dim, next_dim, 4, stride=2, padding=1))
             self.layers.append(nn.ReLU() if block_type == 'resnet' else nn.GELU())
-            current_dim //= 2
+            current_dim = next_dim
             
             # Add blocks
             for _ in range(layers):
@@ -121,7 +124,8 @@ class VQVAE(nn.Module):
                  block_type='convnext',
                  codebook_size=1024,
                  codebook_dim=256,
-                 decay=0.99):
+                 decay=0.99,
+                 channel_multiplier=2.0):
         super().__init__()
         
         # Validation
@@ -134,14 +138,14 @@ class VQVAE(nn.Module):
                 f"Result is {input_resolution / downsample_factor}."
             )
         
-        self.encoder = Encoder(in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type)
+        self.encoder = Encoder(in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type, channel_multiplier)
         self.vq = VectorQuantizer(
             num_embeddings=codebook_size,
             embedding_dim=codebook_dim,
             commitment_cost=0.25,
             decay=decay
         )
-        self.decoder = Decoder(in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type)
+        self.decoder = Decoder(in_channels, base_channels, layers, num_downsamples, codebook_dim, block_type, channel_multiplier)
 
     def forward(self, x):
         z = self.encoder(x)

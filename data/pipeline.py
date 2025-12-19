@@ -6,13 +6,14 @@ import json
 import numpy as np
 import cv2
 import torch
+import random
 from tqdm import tqdm
+from huggingface_hub import list_repo_files
 
 # Configuration
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
-# Correct URL we found earlier
-DATASET_URL = "https://huggingface.co/datasets/open-world-agents/vpt-owamcap/resolve/main/shard-000000.tar"
-RAW_SHARD_PATH = os.path.join(DATA_DIR, "raw_shard.tar")
+REPO_ID = "open-world-agents/vpt-owamcap"
+BASE_URL = f"https://huggingface.co/datasets/{REPO_ID}/resolve/main"
 PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
 
 MOUSE_BINS = 11
@@ -75,7 +76,7 @@ def encode_action(action_dict):
     return idx
 
 def process_video(video_bytes, resolution):
-    temp_path = os.path.join(DATA_DIR, "temp_pipeline.mp4")
+    temp_path = os.path.join(DATA_DIR, f"temp_pipeline_{random.randint(0, 100000)}.mp4")
     with open(temp_path, "wb") as f:
         f.write(video_bytes)
         
@@ -92,31 +93,12 @@ def process_video(video_bytes, resolution):
         os.remove(temp_path)
     return np.array(frames, dtype=np.uint8)
 
-def main():
-    parser = argparse.ArgumentParser(description="VPT Data Pipeline")
-    parser.add_argument("--resolution", type=int, default=64, help="Target video resolution (square)")
-    parser.add_argument("--force-download", action="store_true", help="Force re-download of raw data")
-    args = parser.parse_args()
-
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
-
-    # 1. Download
-    if args.force_download or not os.path.exists(RAW_SHARD_PATH):
-        download_file(DATASET_URL, RAW_SHARD_PATH)
-    else:
-        print(f"Found existing raw data at {RAW_SHARD_PATH}. Skipping download.")
-
-    # 2. Preprocess
-    if not os.path.exists(PROCESSED_DIR):
-        os.makedirs(PROCESSED_DIR)
-
-    print(f"Processing data with resolution {args.resolution}x{args.resolution}...")
-    
+def process_shard(shard_path, resolution):
+    print(f"Processing shard: {shard_path}")
     all_states = []
     all_actions = []
     
-    with tarfile.open(RAW_SHARD_PATH, "r") as tar:
+    with tarfile.open(shard_path, "r") as tar:
         members = tar.getmembers()
         files = {}
         for m in members:
@@ -126,13 +108,13 @@ def main():
                 if base not in files: files[base] = {}
                 files[base][ext] = m
         
-        for base, items in tqdm(files.items()):
+        for base, items in tqdm(files.items(), desc="Processing episodes"):
             if ".mp4" in items and ".jsonl" in items:
                 try:
                     # Process Video
                     f_vid = tar.extractfile(items[".mp4"])
                     vid_bytes = f_vid.read()
-                    frames = process_video(vid_bytes, args.resolution)
+                    frames = process_video(vid_bytes, resolution)
                     
                     # Process Actions
                     f_act = tar.extractfile(items[".jsonl"])
@@ -153,21 +135,66 @@ def main():
                     continue
 
     if not all_states:
-        print("No valid data processed.")
-        return
+        return None, None
 
     final_states = np.concatenate(all_states, axis=0)
     final_actions = np.concatenate(all_actions, axis=0)
+    return final_states, final_actions
+
+def main():
+    parser = argparse.ArgumentParser(description="VPT Data Pipeline")
+    parser.add_argument("--resolution", type=int, default=64, help="Target video resolution (square)")
+    parser.add_argument("--num_shards", type=int, default=1, help="Number of shards to download and process")
+    parser.add_argument("--force-download", action="store_true", help="Force re-download of raw data")
+    args = parser.parse_args()
+
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+    if not os.path.exists(PROCESSED_DIR):
+        os.makedirs(PROCESSED_DIR)
+
+    # 1. List and Sample Shards
+    print("Fetching file list from Hugging Face...")
+    files = list_repo_files(REPO_ID, repo_type="dataset")
+    tar_files = [f for f in files if f.endswith(".tar")]
+    print(f"Found {len(tar_files)} available shards.")
     
-    output_filename = f"shard_res{args.resolution}.pt"
-    output_path = os.path.join(PROCESSED_DIR, output_filename)
-    
-    print(f"Saving {len(final_states)} frames to {output_path}...")
-    torch.save({
-        'states': torch.from_numpy(final_states),
-        'actions': torch.from_numpy(final_actions)
-    }, output_path)
-    print("Done!")
+    selected_shards = random.sample(tar_files, min(args.num_shards, len(tar_files)))
+    print(f"Selected shards: {selected_shards}")
+
+    for shard_name in selected_shards:
+        raw_path = os.path.join(DATA_DIR, shard_name)
+        processed_filename = f"{os.path.splitext(shard_name)[0]}_res{args.resolution}.pt"
+        processed_path = os.path.join(PROCESSED_DIR, processed_filename)
+        
+        # Check if processed exists
+        if os.path.exists(processed_path) and not args.force_download:
+            print(f"Processed file {processed_path} already exists. Skipping.")
+            continue
+
+        # Download
+        if args.force_download or not os.path.exists(raw_path):
+            url = f"{BASE_URL}/{shard_name}"
+            download_file(url, raw_path)
+        else:
+            print(f"Found existing raw data at {raw_path}. Skipping download.")
+
+        # Process
+        states, actions = process_shard(raw_path, args.resolution)
+        
+        if states is not None:
+            print(f"Saving {len(states)} frames to {processed_path}...")
+            torch.save({
+                'states': torch.from_numpy(states),
+                'actions': torch.from_numpy(actions)
+            }, processed_path)
+            print("Done!")
+        else:
+            print(f"No valid data found in {shard_name}.")
+        
+        # Optional: Clean up raw file to save space? 
+        # For now, keeping it as per original behavior, but user might want to delete it.
+        # os.remove(raw_path)
 
 if __name__ == "__main__":
     main()
